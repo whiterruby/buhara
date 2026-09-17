@@ -33,20 +33,6 @@
     </div>
   </section>
 
-  <!-- ONAY BEKLEME: ilk girişte bir kez görünür -->
-  <section id="view-pending" class="hidden">
-    <div class="glass brand">
-      <div class="logo">𓂀</div>
-      <div><h1>BUHARA</h1><p>katılım onayı</p></div>
-    </div>
-    <div class="glass login-card">
-      <div class="pulse">◉</div>
-      <div><b id="pendingName">…</b> olarak kaydoldun.</div>
-      <div class="sys">Grup üyelerinden biri onaylayınca sohbet açılacak. Bu bir kez olur.</div>
-      <button id="cancelBtn" class="ghost">Vazgeç</button>
-    </div>
-  </section>
-
   <!-- SOHBET -->
   <section id="view-chat" class="hidden">
     <div class="glass topbar">
@@ -55,16 +41,25 @@
       <span class="dot" id="statusDot"></span>
       <button id="logoutBtn" class="ghost sm-btn">Çıkış</button>
     </div>
-    <div class="glass hidden" id="approveBox"><div class="sys" style="padding:10px 14px 0">Katılmak isteyenler:</div><div id="approveList"></div></div>
+    <div class="glass hidden" id="onlineBox"><div id="onlineRow"></div></div>
     <div class="glass" id="log"></div>
+    <div id="typingBar" class="hidden"></div>
     <div class="glass dock">
       <div class="attach hidden" id="attachSheet">
-        <button id="optPhoto" class="tile">🖼️<span>Resim</span></button>
-        <button id="optVideo" class="tile">🎬<span>Video</span></button>
-        <button id="optLocation" class="tile">📍<span>Konum</span></button>
-        <button id="optGif" class="tile">✨<span>GIF</span></button>
+        <button id="optPhoto" class="tile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4.5 17.5 10 12l3.5 3.5L17 12l2.5 2.5"/></svg>
+          <span>Resim</span></button>
+        <button id="optVideo" class="tile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10.5 20.5 7.5v9L16 13.5"/></svg>
+          <span>Video</span></button>
+        <button id="optLocation" class="tile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.4-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.6 12 21 12 21Z"/><circle cx="12" cy="10.5" r="2.3"/></svg>
+          <span>Konum</span></button>
+        <button id="optGif" class="tile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10.2v3.6M7 10.2h1.6M7 12h1.4M11 10.2v3.6M14.8 10.4c-.5-.3-1.2-.4-1.8-.2-.9.3-1.3 1.7-.9 2.7.3.9 1.5 1.3 2.3.8M14.6 12H13.4"/></svg>
+          <span>GIF</span></button>
       </div>
-      <div class="row"><button id="attachBtn" class="ghost icon" aria-label="Ekle">＋</button><input id="msg" placeholder="mesaj yaz…" autocomplete="off"/><button id="send" aria-label="Gönder">➤</button></div>
+      <div class="row"><button id="attachBtn" class="ghost icon" aria-label="Ekle">＋</button><input id="msg" placeholder="mesaj yaz…" autocomplete="off"/><button id="send" aria-label="Gönder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5"/><path d="M21 3 14 21l-3.5-7.5L3 10 21 3Z"/></svg></button></div>
       <input type="file" id="img" accept="image/*" class="hidden"/>
       <input type="file" id="video" accept="video/*" class="hidden"/>
       <input type="file" id="gifFile" accept="image/gif" class="hidden"/>

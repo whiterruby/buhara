@@ -11,11 +11,12 @@ let peers = JSON.parse(localStorage.getItem("peers") || "{}");
 const seenIds = new Set();
 const msgCache = [];
 let peerSeen = {};
-let seenTimer = null, joinTimer = null, apprTimer = null;
+let seenTimer = null, liveCh = null, typing = false, typeTimer = null;
+const myName = () => NAMES[UID] || "Arkadaş";
 const nameOf = (uid) => (uid === UID ? "Sen" : (NAMES[uid] || "Arkadaş"));
 
 function show(view) {
-  for (const v of ["login", "pending", "chat"]) $("view-" + v).classList.toggle("hidden", v !== view);
+  for (const v of ["login", "chat"]) $("view-" + v).classList.toggle("hidden", v !== view);
 }
 function setStatus(ok, text) {
   $("statusDot")?.classList.toggle("on", ok);
@@ -47,6 +48,21 @@ async function peerKey(uid, pubB64) {
   return C.importIdentityPublic(peers[uid]);
 }
 
+// Grup anahtarı: önce üye tablosundan çek, yoksa yereldeki eski anahtarı tohumla,
+// o da yoksa ilk kurulumda üret+yükle. Mail+şifre bilen üye direkt girer.
+async function ensureGroupKey() {
+  if (GK) return true;
+  const { data } = await sb.from("group_keys").select("enc_key").eq("group_id", GID).single();
+  if (data?.enc_key) { GK = await C.importGroupKey(data.enc_key); return true; }
+  const local = localStorage.getItem("gkey");
+  const raw = local || await C.exportGroupKey(await C.generateGroupKey());
+  const { error } = await sb.from("group_keys").insert({ group_id: GID, enc_key: raw });
+  if (error) return false;
+  localStorage.setItem("gkey", raw);
+  GK = await C.importGroupKey(raw);
+  return true;
+}
+
 /* ---- balonlar ---- */
 function mountBubble(me, who) {
   const d = document.createElement("div");
@@ -67,7 +83,7 @@ function paintSeen() {
   }
   for (const m of msgCache) {
     const names = (at[m.id] || []);
-    if (names.length) { m.seenEl.textContent = "👁 " + names.join(", "); m.seenEl.style.display = "block"; }
+    if (names.length) { m.seenEl.textContent = "Gördü: " + names.join(", "); m.seenEl.style.display = "block"; }
   }
   $("log").scrollTop = $("log").scrollHeight;
 }
@@ -92,7 +108,7 @@ async function renderRow(row) {
         const [lat, lon] = t.slice(4).split(",");
         const a = document.createElement("a"); a.className = "loc"; a.target = "_blank"; a.rel = "noopener";
         a.href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
-        a.textContent = "📍 Konumumu paylaştı — haritada aç";
+        a.textContent = "Konum paylaşıldı — haritada aç";
         box.insertBefore(a, seen);
       } else box.insertBefore(document.createTextNode(t), seen);
       seenIds.add(row.id); msgCache.push({ id: row.id, ts: row.created_at, sender: row.sender_id, seenEl: seen });
@@ -108,7 +124,7 @@ async function renderRow(row) {
         if (error) return false;
         const pt = await C.decryptBytes(GK, row.media_nonce, await data.text());
         url = URL.createObjectURL(new Blob([pt], { type: row.kind === "video" ? "video/mp4" : "image/*" }));
-        try { cap = await C.decryptText(GK, pub, row.packet); if (cap === "📷" || cap === "🎬") cap = ""; } catch {}
+        try { cap = await C.decryptText(GK, pub, row.packet); if (cap === "Resim" || cap === "Video") cap = ""; } catch {}
       }
       const { box, seen } = mountBubble(me, nameOf(row.sender_id));
       let el;
@@ -124,9 +140,55 @@ async function renderRow(row) {
   return false;
 }
 
+/* ---- çevrimiçi + yazıyor (presence, ephemeral — DB'ye yazılmaz) ---- */
+function paintLive(state) {
+  const others = [];
+  for (const arr of Object.values(state)) for (const p of arr) {
+    if (p.uid !== UID && !others.find((o) => o.uid === p.uid)) others.push(p);
+  }
+  const box = $("onlineBox");
+  if (!others.length) { box.classList.add("hidden"); }
+  else {
+    box.classList.remove("hidden");
+    const row = $("onlineRow"); row.innerHTML = "";
+    for (const o of others) {
+      const c = document.createElement("span");
+      c.className = "chip" + (o.typing ? " typing" : "");
+      const dot = document.createElement("i"); c.appendChild(dot);
+      c.appendChild(document.createTextNode(o.name + (o.typing ? " yazıyor" : " çevrimiçi")));
+      row.appendChild(c);
+    }
+  }
+  const writers = others.filter((o) => o.typing).map((o) => o.name);
+  const tb = $("typingBar");
+  if (!writers.length) { tb.classList.add("hidden"); tb.innerHTML = ""; }
+  else {
+    tb.classList.remove("hidden"); tb.innerHTML = "";
+    tb.appendChild(document.createTextNode(writers.join(", ") + " yazıyor"));
+    const d = document.createElement("span"); d.className = "dots"; tb.appendChild(d);
+  }
+}
+function joinLive() {
+  if (liveCh) sb.removeChannel(liveCh);
+  liveCh = sb.channel("live-" + GID);
+  liveCh.on("presence", { event: "sync" }, () => paintLive(liveCh.presenceState()));
+  liveCh.subscribe(async (st) => {
+    if (st === "SUBSCRIBED") { typing = false; await liveCh.track({ uid: UID, name: myName(), typing: false }); }
+  });
+}
+function setTyping(on) {
+  if (!liveCh || typing === on) return;
+  typing = on;
+  liveCh.track({ uid: UID, name: myName(), typing: on }).catch(() => {});
+}
+function pokeTyping() {
+  setTyping(true);
+  clearTimeout(typeTimer);
+  typeTimer = setTimeout(() => setTyping(false), 2500);
+}
+
 /* ---- sohbet ---- */
 async function enterChat() {
-  stopJoin();
   show("chat"); setStatus(true, "bağlı ✓");
   $("log").innerHTML = ""; seenIds.clear(); msgCache.length = 0; peerSeen = {};
   const { data, error } = await sb.from("messages").select("*").eq("group_id", GID).order("created_at", { ascending: true }).limit(200);
@@ -144,61 +206,7 @@ async function enterChat() {
       peerSeen[p.new.user_id] = p.new.last_seen_at; paintSeen();
     })
     .subscribe();
-  refreshApprovals();
-  clearInterval(apprTimer);
-  apprTimer = setInterval(refreshApprovals, 5000);
-}
-
-/* ---- katılım protokolü ---- */
-async function ensureJoinRow() {
-  let jk = localStorage.getItem("joinJwk");
-  let joinPriv, joinPub;
-  if (jk) { joinPriv = await C.importJoinPriv(JSON.parse(jk)); joinPub = C.b64.e(new Uint8Array(await crypto.subtle.exportKey("raw", await C.importJoinPub(localStorage.getItem("joinPub"))))); }
-  else { const j = await C.genJoinKey(); joinPriv = j.priv; joinPub = j.pub; localStorage.setItem("joinJwk", JSON.stringify(j.jwk)); localStorage.setItem("joinPub", j.pub); }
-  await sb.from("devices").upsert({ group_id: GID, user_id: UID, ecdh_pub: joinPub, status: "pending" }, { onConflict: "group_id,user_id" });
-  return { joinPriv, joinPub };
-}
-function stopJoin() { clearInterval(joinTimer); joinTimer = null; }
-async function waitApproval(joinPriv) {
-  stopJoin();
-  joinTimer = setInterval(async () => {
-    const { data } = await sb.from("devices").select("*").eq("group_id", GID).eq("user_id", UID).single();
-    if (data && data.status === "ready" && data.wrapped) {
-      try {
-        const raw = await C.unwrapGroupKey({ eph: data.eph_pub, nonce: data.wrap_nonce, ct: data.wrapped }, joinPriv);
-        localStorage.setItem("gkey", raw);
-        GK = await C.importGroupKey(raw);
-        localStorage.removeItem("joinJwk"); localStorage.removeItem("joinPub");
-        await sb.from("devices").delete().eq("group_id", GID).eq("user_id", UID);
-        enterChat();
-      } catch {}
-    }
-  }, 3000);
-}
-async function refreshApprovals() {
-  if (!GK) return;
-  const { data } = await sb.from("devices").select("*").eq("group_id", GID).eq("status", "pending");
-  const list = (data || []).filter((d) => d.user_id !== UID);
-  const box = $("approveBox");
-  if (!list.length) { box.classList.add("hidden"); return; }
-  box.classList.remove("hidden");
-  const el = $("approveList"); el.innerHTML = "";
-  for (const d of list) {
-    const row = document.createElement("div"); row.className = "appr";
-    const w = document.createElement("div"); w.className = "who"; w.textContent = nameOf(d.user_id) + " katılmak istiyor";
-    const b = document.createElement("button"); b.textContent = "Onayla";
-    b.onclick = async () => {
-      b.disabled = true;
-      try {
-        const raw = C.b64.e(new Uint8Array(await crypto.subtle.exportKey("raw", GK)));
-        const wrap = await C.wrapGroupKey(raw, d.ecdh_pub);
-        await sb.from("devices").update({ eph_pub: wrap.eph, wrapped: wrap.ct, wrap_nonce: wrap.nonce, status: "ready" })
-          .eq("group_id", GID).eq("user_id", d.user_id);
-      } catch {}
-      refreshApprovals();
-    };
-    row.appendChild(w); row.appendChild(b); el.appendChild(row);
-  }
+  joinLive();
 }
 
 /* ---- giriş: sadece e-posta + şifre ---- */
@@ -212,28 +220,21 @@ $("loginBtn").onclick = async () => {
     UID = data.user.id;
     peers[UID] = IDpubB64; localStorage.setItem("peers", JSON.stringify(peers));
     localStorage.setItem("email", email);
-    if (GK) { enterChat(); return; }
-    // anahtar yoksa katılım akışı
-    $("pendingName").textContent = nameOf(UID);
-    show("pending");
-    const { joinPriv } = await ensureJoinRow();
-    waitApproval(joinPriv);
+    if (!await ensureGroupKey()) throw new Error("grup anahtarı alınamadı");
+    await enterChat();
   } catch (e) { $("loginErr").textContent = "Giriş olmadı: " + e.message; }
 };
-$("cancelBtn").onclick = async () => {
-  stopJoin();
-  try { if (UID) await sb.from("devices").delete().eq("group_id", GID).eq("user_id", UID); } catch {}
-  await sb.auth.signOut(); show("login");
-};
-$("logoutBtn").onclick = async () => { clearInterval(apprTimer); await sb.auth.signOut(); show("login"); setStatus(false, "çıkış yapıldı"); };
+$("logoutBtn").onclick = async () => { if (liveCh) sb.removeChannel(liveCh); await sb.auth.signOut(); show("login"); setStatus(false, "çıkış yapıldı"); };
 
 /* ---- gönderme ---- */
 $("send").onclick = sendText;
 $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") sendText(); });
+$("msg").addEventListener("input", pokeTyping);
 async function sendText() {
   const v = $("msg").value.trim();
   if (!v || !GK) return;
   $("msg").value = "";
+  setTyping(false);
   const pkt = await C.encryptText(GK, ID.privateKey, UID, v);
   pkt.pub = IDpubB64;
   const { data, error } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind: "text", packet: pkt }).select().single();
@@ -277,19 +278,20 @@ async function sendFile(file, kind, caption) {
   const { data, error } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind, packet: pkt, media_path: path, media_nonce: enc.nonce }).select().single();
   if (!error && data) renderRow(data);
 }
-$("img").onchange = () => { const f = $("img").files[0]; $("img").value = ""; if (f) sendFile(f, "image", "📷"); };
-$("video").onchange = () => { const f = $("video").files[0]; $("video").value = ""; if (f) sendFile(f, "video", "🎬"); };
+$("img").onchange = () => { const f = $("img").files[0]; $("img").value = ""; if (f) sendFile(f, "image", ""); };
+$("video").onchange = () => { const f = $("video").files[0]; $("video").value = ""; if (f) sendFile(f, "video", ""); };
 $("gifFile").onchange = () => { const f = $("gifFile").files[0]; $("gifFile").value = ""; if (f) sendFile(f, "gif", ""); };
 
 (async () => {
   await loadIdentity();
   await loadSavedKey();
+  localStorage.removeItem("joinJwk"); localStorage.removeItem("joinPub");
   if (localStorage.getItem("email")) $("email").value = localStorage.getItem("email");
   const { data } = await sb.auth.getSession();
   if (data.session) {
     UID = data.session.user.id;
-    if (GK) enterChat();
-    else { $("pendingName").textContent = nameOf(UID); show("pending"); const { joinPriv } = await ensureJoinRow(); waitApproval(joinPriv); }
+    if (await ensureGroupKey()) enterChat();
+    else show("login");
   }
   else show("login");
 })();
