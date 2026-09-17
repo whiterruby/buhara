@@ -86,6 +86,19 @@ describe("grup kripto çekirdeği", () => {
     await assert.rejects(async () => unwrapGroupKey(wrap, await importJoinPriv(other.jwk)));
   });
 
+  it("yanıt alıntısı paket içinde taşınır (jsonb turu)", async () => {
+    const gk = await generateGroupKey();
+    const alice = await generateIdentity();
+    const alicePub = await importIdentityPublic(await exportIdentityPublic(alice));
+    const pkt = await encryptText(gk, alice.privateKey, "alice", "buna katılıyorum");
+    pkt.pub = await exportIdentityPublic(alice);
+    pkt.reply = { id: "msg-123", name: "PC", text: "yarın buluşalım mı" };
+    const viaDb = JSON.parse(JSON.stringify(pkt)); // supabase jsonb turu
+    const out = await decryptText(gk, alicePub, viaDb);
+    assert.equal(out.text, "buna katılıyorum");
+    assert.equal(viaDb.reply.text, "yarın buluşalım mı");
+  });
+
   it("resim baytı gidiş-dönüş (1MB sahte resim)", async () => {
     const gk = await generateGroupKey();
     const fake = new Uint8Array(1024 * 1024).map((_, i) => i % 251);

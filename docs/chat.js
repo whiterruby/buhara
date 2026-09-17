@@ -9,11 +9,14 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 let GK = null, ID = null, IDpubB64 = null, UID = null;
 let peers = JSON.parse(localStorage.getItem("peers") || "{}");
 const seenIds = new Set();
-const msgCache = [];
+const msgCache = []; // {id, ts, sender, kind, text, edited, row, box, seenEl}
 let peerSeen = {};
 let seenTimer = null, liveCh = null, typing = false, typeTimer = null;
+let replyTo = null, editingId = null;
+const SEND_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5"/><path d="M21 3 14 21l-3.5-7.5L3 10 21 3Z"/></svg>`;
 const myName = () => NAMES[UID] || "Arkadaş";
 const nameOf = (uid) => (uid === UID ? "Sen" : (NAMES[uid] || "Arkadaş"));
+const hhmm = (iso) => new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
 
 function show(view) {
   for (const v of ["login", "chat"]) $("view-" + v).classList.toggle("hidden", v !== view);
@@ -48,8 +51,6 @@ async function peerKey(uid, pubB64) {
   return C.importIdentityPublic(peers[uid]);
 }
 
-// Grup anahtarı: önce üye tablosundan çek, yoksa yereldeki eski anahtarı tohumla,
-// o da yoksa ilk kurulumda üret+yükle. Mail+şifre bilen üye direkt girer.
 async function ensureGroupKey() {
   if (GK) return true;
   const { data } = await sb.from("group_keys").select("enc_key").eq("group_id", GID).single();
@@ -64,29 +65,51 @@ async function ensureGroupKey() {
 }
 
 /* ---- balonlar ---- */
-function mountBubble(me, who) {
+function mountBubble(me, who, id) {
   const d = document.createElement("div");
   d.className = "bubble " + (me ? "me" : "them");
+  d.dataset.mid = id;
   if (!me) { const w = document.createElement("div"); w.className = "who"; w.textContent = who; d.appendChild(w); }
-  const seen = document.createElement("div"); seen.className = "seen"; seen.style.display = "none"; d.appendChild(seen);
+  const seen = document.createElement("div"); seen.className = "seen"; d.appendChild(seen);
+  d.addEventListener("click", (e) => {
+    if (e.target.closest("a, video")) return; // link/video kendi işini yapar
+    openSheet(id);
+  });
   $("log").appendChild(d); $("log").scrollTop = 1e9;
   return { box: d, seen };
 }
-function paintSeen() {
-  for (const m of msgCache) { m.seenEl.style.display = "none"; m.seenEl.textContent = ""; }
-  const at = {};
+function clearBubble(box) {
+  [...box.childNodes].forEach((n) => {
+    if (n.nodeType === 3) n.remove();
+    else if (!(n.classList?.contains("who") || n.classList?.contains("seen"))) n.remove();
+  });
+}
+function addQuote(box, seen, reply) {
+  const q = document.createElement("div"); q.className = "quote";
+  const w = document.createElement("div"); w.className = "who"; w.textContent = reply.name;
+  const t = document.createElement("div"); t.className = "txt"; t.textContent = reply.text;
+  q.appendChild(w); q.appendChild(t);
+  q.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const target = document.querySelector(`[data-mid="${reply.id}"]`);
+    if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); target.classList.remove("flash"); void target.offsetWidth; target.classList.add("flash"); }
+  });
+  box.insertBefore(q, seen);
+}
+function paintMeta(m) {
+  let s = hhmm(m.ts) + (m.edited ? " · düzenlendi" : "");
+  const names = [];
   for (const [uid, ts] of Object.entries(peerSeen)) {
     if (uid === UID || !ts) continue;
+    // bu balon, kişinin gördüğü en son balonsa ismini yaz
     let best = null;
-    for (const m of msgCache) { if (m.ts <= ts && (!best || m.ts > best.ts)) best = m; }
-    if (best) (at[best.id] ||= []).push(nameOf(uid));
+    for (const x of msgCache) { if (x.ts <= ts && (!best || x.ts > best.ts)) best = x; }
+    if (best && best.id === m.id) names.push(nameOf(uid));
   }
-  for (const m of msgCache) {
-    const names = (at[m.id] || []);
-    if (names.length) { m.seenEl.textContent = "Gördü: " + names.join(", "); m.seenEl.style.display = "block"; }
-  }
-  $("log").scrollTop = $("log").scrollHeight;
+  if (names.length) s += "\nGördü: " + names.join(", ");
+  m.seenEl.textContent = s;
 }
+function paintSeen() { for (const m of msgCache) paintMeta(m); $("log").scrollTop = $("log").scrollHeight; }
 function touchSeen(latestTs) {
   if (!latestTs) return;
   clearTimeout(seenTimer);
@@ -96,58 +119,138 @@ function touchSeen(latestTs) {
   }, 800);
 }
 
+async function decryptRow(row) {
+  const pub = await peerKey(row.sender_id, row.packet.pub);
+  if (row.kind === "text" || row.kind === "location") {
+    return { text: await C.decryptText(GK, pub, row.packet) };
+  }
+  if (row.kind === "gif" && !row.media_path) {
+    return { text: "", url: await C.decryptText(GK, pub, row.packet) };
+  }
+  const { data, error } = await sb.storage.from("chat-media").download(row.media_path);
+  if (error) throw error;
+  const pt = await C.decryptBytes(GK, row.media_nonce, await data.text());
+  let cap = "";
+  try { cap = await C.decryptText(GK, pub, row.packet); if (cap === "Resim" || cap === "Video" || cap === "📷" || cap === "🎬") cap = ""; } catch {}
+  return { text: cap, url: URL.createObjectURL(new Blob([pt], { type: row.kind === "video" ? "video/mp4" : "image/*" })) };
+}
+
+function fillBubble(m, row, dec) {
+  clearBubble(m.box);
+  const { box, seenEl: seen } = m;
+  if (row.packet?.reply) addQuote(box, seen, row.packet.reply);
+  if (row.kind === "text") {
+    box.insertBefore(document.createTextNode(dec.text), seen);
+  } else if (row.kind === "location" && dec.text.startsWith("geo:")) {
+    const [lat, lon] = dec.text.slice(4).split(",");
+    const a = document.createElement("a"); a.className = "loc"; a.target = "_blank"; a.rel = "noopener";
+    a.href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+    a.textContent = "Konum paylaşıldı — haritada aç";
+    box.insertBefore(a, seen);
+  } else if (row.kind === "image" || row.kind === "gif" || row.kind === "video") {
+    let el;
+    if (row.kind === "video") { el = document.createElement("video"); el.controls = true; el.preload = "metadata"; el.src = dec.url; }
+    else { el = document.createElement("img"); el.loading = "lazy"; el.src = dec.url; }
+    box.insertBefore(el, seen);
+    if (dec.text) box.insertBefore(document.createTextNode(dec.text), seen);
+  }
+  m.text = dec.text || ""; m.edited = !!row.edited; m.row = row;
+  paintMeta(m);
+}
+
 async function renderRow(row) {
   if (!row || seenIds.has(row.id)) return true;
   try {
     const me = row.sender_id === UID;
-    const pub = await peerKey(row.sender_id, row.packet.pub);
-    if (row.kind === "text" || row.kind === "location") {
-      const t = await C.decryptText(GK, pub, row.packet);
-      const { box, seen } = mountBubble(me, nameOf(row.sender_id));
-      if (row.kind === "location" && t.startsWith("geo:")) {
-        const [lat, lon] = t.slice(4).split(",");
-        const a = document.createElement("a"); a.className = "loc"; a.target = "_blank"; a.rel = "noopener";
-        a.href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
-        a.textContent = "Konum paylaşıldı — haritada aç";
-        box.insertBefore(a, seen);
-      } else box.insertBefore(document.createTextNode(t), seen);
-      seenIds.add(row.id); msgCache.push({ id: row.id, ts: row.created_at, sender: row.sender_id, seenEl: seen });
-      paintSeen(); touchSeen(row.created_at);
-      return true;
-    }
-    if (row.kind === "image" || row.kind === "gif" || row.kind === "video") {
-      let url, cap = "";
-      if (row.kind === "gif" && !row.media_path) {
-        url = await C.decryptText(GK, pub, row.packet);
-      } else {
-        const { data, error } = await sb.storage.from("chat-media").download(row.media_path);
-        if (error) return false;
-        const pt = await C.decryptBytes(GK, row.media_nonce, await data.text());
-        url = URL.createObjectURL(new Blob([pt], { type: row.kind === "video" ? "video/mp4" : "image/*" }));
-        try { cap = await C.decryptText(GK, pub, row.packet); if (cap === "Resim" || cap === "Video") cap = ""; } catch {}
-      }
-      const { box, seen } = mountBubble(me, nameOf(row.sender_id));
-      let el;
-      if (row.kind === "video") { el = document.createElement("video"); el.controls = true; el.preload = "metadata"; el.src = url; }
-      else { el = document.createElement("img"); el.loading = "lazy"; el.src = url; }
-      box.insertBefore(el, seen);
-      if (cap) box.insertBefore(document.createTextNode(cap), seen);
-      seenIds.add(row.id); msgCache.push({ id: row.id, ts: row.created_at, sender: row.sender_id, seenEl: seen });
-      paintSeen(); touchSeen(row.created_at);
-      return true;
-    }
+    const { box, seen } = mountBubble(me, nameOf(row.sender_id), row.id);
+    const m = { id: row.id, ts: row.created_at, sender: row.sender_id, kind: row.kind, text: "", edited: !!row.edited, row, box, seenEl: seen };
+    msgCache.push(m);
+    fillBubble(m, row, await decryptRow(row));
+    seenIds.add(row.id);
+    paintSeen(); touchSeen(row.created_at);
+    return true;
   } catch { return false; }
-  return false;
+}
+async function updateRow(row) {
+  const m = msgCache.find((x) => x.id === row.id);
+  if (!m) return renderRow(row);
+  try { fillBubble(m, row, await decryptRow(row)); paintSeen(); } catch {}
+}
+function removeRow(id) {
+  const i = msgCache.findIndex((x) => x.id === id);
+  if (i < 0) return;
+  msgCache[i].box.remove();
+  msgCache.splice(i, 1);
+  seenIds.delete(id);
+  paintSeen();
 }
 
-/* ---- çevrimiçi + yazıyor (presence, ephemeral — DB'ye yazılmaz) ---- */
+/* ---- mesaj işlemleri (Telegram tarzı) ---- */
+function closeSheet() { $("sheet").classList.add("hidden"); $("sheetBtns").innerHTML = ""; }
+$("sheetCancel").onclick = closeSheet;
+$("sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") closeSheet(); });
+function sheetBtn(label, cls, fn) {
+  const b = document.createElement("button");
+  b.textContent = label; if (cls) b.className = cls;
+  b.onclick = fn; $("sheetBtns").appendChild(b);
+  return b;
+}
+function openSheet(id) {
+  const m = msgCache.find((x) => x.id === id);
+  if (!m) return;
+  closeSheet();
+  const mine = m.sender === UID;
+  sheetBtn("Yanıtla", "ghost", () => {
+    replyTo = { id: m.id, name: nameOf(m.sender), text: m.kind === "text" ? m.text : ({ image: "Resim", video: "Video", gif: "GIF", location: "Konum" }[m.kind] || "Mesaj") };
+    editingId = null; $("send").innerHTML = SEND_SVG;
+    $("composeTitle").textContent = "Yanıt: " + replyTo.name;
+    $("composeText").textContent = replyTo.text.slice(0, 120);
+    $("composeBar").classList.remove("hidden");
+    closeSheet(); $("msg").focus();
+  });
+  if (m.kind === "text" || m.kind === "location") sheetBtn("Kopyala", "ghost", () => {
+    navigator.clipboard?.writeText(m.text).catch(() => {});
+    closeSheet();
+  });
+  if (mine && m.kind === "text") sheetBtn("Düzenle", "ghost", () => {
+    editingId = m.id; replyTo = null;
+    $("msg").value = m.text;
+    $("send").textContent = "✓";
+    $("composeTitle").textContent = "Düzenleniyor";
+    $("composeText").textContent = m.text.slice(0, 120);
+    $("composeBar").classList.remove("hidden");
+    closeSheet(); $("msg").focus();
+  });
+  if (mine) {
+    const del = sheetBtn("Sil", "ghost danger", () => {
+      del.textContent = "Emin misin? Herkesten silinsin mi?";
+      del.className = "confirm";
+      del.onclick = async () => {
+        closeSheet(); cancelCompose();
+        const path = m.row.media_path;
+        await sb.from("messages").delete().eq("id", m.id);
+        if (path) sb.storage.from("chat-media").remove([path]).then(() => {});
+      };
+    });
+  }
+  $("sheet").classList.remove("hidden");
+}
+function cancelCompose() {
+  replyTo = null; editingId = null;
+  $("msg").value = "";
+  $("send").innerHTML = SEND_SVG;
+  $("composeBar").classList.add("hidden");
+}
+$("composeCancel").onclick = cancelCompose;
+
+/* ---- çevrimiçi + yazıyor ---- */
 function paintLive(state) {
   const others = [];
   for (const arr of Object.values(state)) for (const p of arr) {
     if (p.uid !== UID && !others.find((o) => o.uid === p.uid)) others.push(p);
   }
   const box = $("onlineBox");
-  if (!others.length) { box.classList.add("hidden"); }
+  if (!others.length) box.classList.add("hidden");
   else {
     box.classList.remove("hidden");
     const row = $("onlineRow"); row.innerHTML = "";
@@ -191,6 +294,7 @@ function pokeTyping() {
 async function enterChat() {
   show("chat"); setStatus(true, "bağlı ✓");
   $("log").innerHTML = ""; seenIds.clear(); msgCache.length = 0; peerSeen = {};
+  cancelCompose();
   const { data, error } = await sb.from("messages").select("*").eq("group_id", GID).order("created_at", { ascending: true }).limit(200);
   if (error) { setStatus(false, "okunamadı"); return; }
   for (const r of data) await renderRow(r);
@@ -199,7 +303,11 @@ async function enterChat() {
   paintSeen();
   if (msgCache.length) touchSeen(msgCache[msgCache.length - 1].ts);
   sb.channel("chat-" + GID)
-    .on("postgres", { event: "INSERT", schema: "public", table: "messages", filter: "group_id=eq." + GID }, (p) => renderRow(p.new))
+    .on("postgres", { event: "*", schema: "public", table: "messages", filter: "group_id=eq." + GID }, (p) => {
+      if (p.eventType === "INSERT") renderRow(p.new);
+      else if (p.eventType === "UPDATE") updateRow(p.new);
+      else if (p.eventType === "DELETE" && p.old?.id) removeRow(p.old.id);
+    })
     .subscribe();
   sb.channel("seen-" + GID)
     .on("postgres", { event: "*", schema: "public", table: "read_state", filter: "group_id=eq." + GID }, (p) => {
@@ -209,7 +317,7 @@ async function enterChat() {
   joinLive();
 }
 
-/* ---- giriş: sadece e-posta + şifre ---- */
+/* ---- giriş ---- */
 $("loginBtn").onclick = async () => {
   $("loginErr").textContent = "";
   const email = $("email").value.trim(), pass = $("pass").value;
@@ -226,17 +334,30 @@ $("loginBtn").onclick = async () => {
 };
 $("logoutBtn").onclick = async () => { if (liveCh) sb.removeChannel(liveCh); await sb.auth.signOut(); show("login"); setStatus(false, "çıkış yapıldı"); };
 
-/* ---- gönderme ---- */
+/* ---- gönderme (yeni / yanıt / düzenleme) ---- */
 $("send").onclick = sendText;
 $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") sendText(); });
 $("msg").addEventListener("input", pokeTyping);
 async function sendText() {
   const v = $("msg").value.trim();
   if (!v || !GK) return;
-  $("msg").value = "";
   setTyping(false);
+  if (editingId) {
+    const m = msgCache.find((x) => x.id === editingId);
+    const pkt = await C.encryptText(GK, ID.privateKey, UID, v);
+    pkt.pub = IDpubB64;
+    if (m?.row.packet?.reply) pkt.reply = m.row.packet.reply;
+    const cur = editingId;
+    cancelCompose();
+    const { data, error } = await sb.from("messages").update({ packet: pkt, edited: true }).eq("id", cur).select().single();
+    if (!error && data) updateRow(data);
+    return;
+  }
+  $("msg").value = "";
   const pkt = await C.encryptText(GK, ID.privateKey, UID, v);
   pkt.pub = IDpubB64;
+  if (replyTo) pkt.reply = { id: replyTo.id, name: replyTo.name, text: replyTo.text.slice(0, 140) };
+  cancelCompose();
   const { data, error } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind: "text", packet: pkt }).select().single();
   if (!error && data) renderRow(data);
 }
@@ -251,6 +372,8 @@ $("optGif").onclick = async () => {
   if (url && url.trim()) {
     const pkt = await C.encryptText(GK, ID.privateKey, UID, url.trim());
     pkt.pub = IDpubB64;
+    if (replyTo) pkt.reply = { id: replyTo.id, name: replyTo.name, text: replyTo.text.slice(0, 140) };
+    cancelCompose();
     const { data } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind: "gif", packet: pkt }).select().single();
     if (data) renderRow(data);
   } else $("gifFile").click();
@@ -262,30 +385,33 @@ $("optLocation").onclick = () => {
     const t = `geo:${pos.coords.latitude.toFixed(5)},${pos.coords.longitude.toFixed(5)}`;
     const pkt = await C.encryptText(GK, ID.privateKey, UID, t);
     pkt.pub = IDpubB64;
+    if (replyTo) pkt.reply = { id: replyTo.id, name: replyTo.name, text: replyTo.text.slice(0, 140) };
+    cancelCompose();
     const { data } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind: "location", packet: pkt }).select().single();
     if (data) renderRow(data);
   }, () => alert("Konum izni verilmedi."), { enableHighAccuracy: false, timeout: 10000 });
 };
-async function sendFile(file, kind, caption) {
+async function sendFile(file, kind) {
   if (file.size > 100 * 1024 * 1024) { alert("Dosya çok büyük (100MB üstü)."); return; }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const enc = await C.encryptBytes(GK, bytes);
   const path = GID + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".enc";
   const { error: upErr } = await sb.storage.from("chat-media").upload(path, new Blob([enc.ct], { type: "text/plain" }));
   if (upErr) { alert("Yükleme olmadı: " + upErr.message); return; }
-  const pkt = await C.encryptText(GK, ID.privateKey, UID, caption);
+  const pkt = await C.encryptText(GK, ID.privateKey, UID, "");
   pkt.pub = IDpubB64;
+  if (replyTo) pkt.reply = { id: replyTo.id, name: replyTo.name, text: replyTo.text.slice(0, 140) };
+  cancelCompose();
   const { data, error } = await sb.from("messages").insert({ group_id: GID, sender_id: UID, kind, packet: pkt, media_path: path, media_nonce: enc.nonce }).select().single();
   if (!error && data) renderRow(data);
 }
-$("img").onchange = () => { const f = $("img").files[0]; $("img").value = ""; if (f) sendFile(f, "image", ""); };
-$("video").onchange = () => { const f = $("video").files[0]; $("video").value = ""; if (f) sendFile(f, "video", ""); };
-$("gifFile").onchange = () => { const f = $("gifFile").files[0]; $("gifFile").value = ""; if (f) sendFile(f, "gif", ""); };
+$("img").onchange = () => { const f = $("img").files[0]; $("img").value = ""; if (f) sendFile(f, "image"); };
+$("video").onchange = () => { const f = $("video").files[0]; $("video").value = ""; if (f) sendFile(f, "video"); };
+$("gifFile").onchange = () => { const f = $("gifFile").files[0]; $("gifFile").value = ""; if (f) sendFile(f, "gif"); };
 
 (async () => {
   await loadIdentity();
   await loadSavedKey();
-  localStorage.removeItem("joinJwk"); localStorage.removeItem("joinPub");
   if (localStorage.getItem("email")) $("email").value = localStorage.getItem("email");
   const { data } = await sb.auth.getSession();
   if (data.session) {
