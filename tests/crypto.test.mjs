@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   generateGroupKey, exportGroupKey, importGroupKey, deriveGroupKey,
+  genJoinKey, importJoinPriv, wrapGroupKey, unwrapGroupKey,
   generateIdentity, exportIdentityPublic, importIdentityPublic,
   encryptText, decryptText, encryptBytes, decryptBytes,
 } from "../src/crypto/groupCrypto.mjs";
@@ -66,6 +67,23 @@ describe("grup kripto çekirdeği", () => {
     assert.equal(out.text, "oda testi");
     const wrong = await deriveGroupKey("farklı şifre", "salt-test");
     await assert.rejects(() => decryptText(wrong, alicePub, pkt));
+  });
+
+  it("katılım: sarmalanmış grup anahtarı sadece o cihazda açılır", async () => {
+    const gk = await generateGroupKey();
+    const raw = await exportGroupKey(gk);
+    const phone = await genJoinKey();
+    const wrap = await wrapGroupKey(raw, phone.pub);
+    const opened = await unwrapGroupKey(wrap, await importJoinPriv(phone.jwk));
+    assert.equal(opened, raw);
+    const gk2 = await importGroupKey(opened);
+    const alice = await generateIdentity();
+    const alicePub = await importIdentityPublic(await exportIdentityPublic(alice));
+    const pkt = await encryptText(gk, alice.privateKey, "alice", "katıldım");
+    assert.equal((await decryptText(gk2, alicePub, pkt)).text, "katıldım");
+    // başka cihaz açamaz
+    const other = await genJoinKey();
+    await assert.rejects(async () => unwrapGroupKey(wrap, await importJoinPriv(other.jwk)));
   });
 
   it("resim baytı gidiş-dönüş (1MB sahte resim)", async () => {

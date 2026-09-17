@@ -72,7 +72,7 @@ export async function decryptText(groupKey, identityPub, packet) {
   return { sender: packet.sender, text: td.decode(pt) };
 }
 
-// 4) Dosya/resim: baytları aynı grup anahtarıyla, her dos tectonic fresh nonce ile.
+// 4) Dosya/resim: baytları aynı grup anahtarıyla, her dosya fresh nonce ile.
 // Büyük dosyada browser'da chunk'lanır, çekirdek aynı kalır.
 export async function encryptBytes(groupKey, bytes) {
   const nonce = webcrypto.getRandomValues(new Uint8Array(12));
@@ -82,4 +82,28 @@ export async function encryptBytes(groupKey, bytes) {
 export async function decryptBytes(groupKey, nonceB64, ctB64) {
   const pt = await subtle.decrypt({ name: "AES-GCM", iv: b64d(nonceB64) }, groupKey, b64d(ctB64));
   return new Uint8Array(pt);
+}
+
+// 5) Katılım protokolü (browser ile aynı): grup anahtarını yeni cihaza ECDH ile sarma
+export async function genJoinKey() {
+  const kp = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+  return { priv: kp.privateKey, pub: b64e(new Uint8Array(await subtle.exportKey("raw", kp.publicKey))),
+           jwk: await subtle.exportKey("jwk", kp.privateKey) };
+}
+export async function importJoinPriv(jwk) {
+  return subtle.importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+}
+export async function importJoinPub(s) {
+  return subtle.importKey("raw", b64d(s), { name: "ECDH", namedCurve: "P-256" }, true, []);
+}
+export async function wrapGroupKey(gkRawB64, devicePubB64) {
+  const eph = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
+  const aes = await subtle.deriveKey({ name: "ECDH", public: await importJoinPub(devicePubB64) }, eph.privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+  const nonce = webcrypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, b64d(gkRawB64)));
+  return { eph: b64e(new Uint8Array(await subtle.exportKey("raw", eph.publicKey))), nonce: b64e(nonce), ct: b64e(ct) };
+}
+export async function unwrapGroupKey(wrap, joinPriv) {
+  const aes = await subtle.deriveKey({ name: "ECDH", public: await importJoinPub(wrap.eph) }, joinPriv, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  return b64e(new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: b64d(wrap.nonce) }, aes, b64d(wrap.ct))));
 }

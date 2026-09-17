@@ -1,62 +1,77 @@
 <!doctype html>
-<html lang="tr">
+<html lang="tr" class="dark">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>BUHARA</title>
 <link rel="manifest" href="manifest.webmanifest"/>
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
-<meta name="theme-color" content="#0b141a"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="BUHARA"/>
+<meta name="theme-color" content="#141311"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
+<div class="bg"><img src="pharaoh-bg.webp" alt=""/><div class="veil"></div><div class="glow"></div></div>
+<div class="shell">
 
-<!-- GİRİŞ -->
-<section id="view-login" class="login-wrap">
-  <div class="login-card">
-    <div class="avatar big">B</div>
-    <h1>BUHARA</h1>
-    <input id="email" placeholder="e-posta" autocomplete="username" inputmode="email"/>
-    <input id="pass" type="password" placeholder="şifre" autocomplete="current-password"/>
-    <input id="room" type="password" placeholder="oda şifresi (ilk girişte bir kez)" autocomplete="off"/>
-    <button id="loginBtn">Giriş yap</button>
-    <div id="loginErr"></div>
-  </div>
-</section>
-
-<!-- SOHBET -->
-<section id="view-chat" class="hidden chat-wrap">
-  <header class="topbar">
-    <div class="avatar">B</div>
-    <div class="tt"><h2>BUHARA</h2><span id="statusText">bağlanıyor…</span></div>
-    <span class="dot" id="statusDot"></span>
-    <button id="logoutBtn" title="Çıkış">⎋</button>
-  </header>
-
-  <div id="log"></div>
-
-  <footer class="dock">
-    <div class="attach hidden" id="attachSheet">
-      <button id="optPhoto">🖼️<span>Resim</span></button>
-      <button id="optVideo">🎬<span>Video</span></button>
-      <button id="optLocation">📍<span>Konum</span></button>
-      <button id="optGif">✨<span>GIF</span></button>
+  <!-- GİRİŞ: sadece e-posta + şifre -->
+  <section id="view-login">
+    <div class="glass brand">
+      <div class="logo">𓂀</div>
+      <div><h1>BUHARA</h1><p>uçtan uca şifreli</p></div>
     </div>
-    <div class="row">
-      <button id="attachBtn" aria-label="Ekle">＋</button>
-      <input id="msg" placeholder="Mesaj" autocomplete="off"/>
-      <button id="send" aria-label="Gönder">➤</button>
+    <div class="glass login-card">
+      <input id="email" placeholder="e-posta" autocomplete="username" inputmode="email"/>
+      <input id="pass" type="password" placeholder="şifre" autocomplete="current-password"/>
+      <button id="loginBtn">Giriş yap</button>
+      <div class="sys" id="loginErr"></div>
     </div>
-    <input type="file" id="img" accept="image/*" class="hidden"/>
-    <input type="file" id="video" accept="video/*" class="hidden"/>
-    <input type="file" id="gifFile" accept="image/gif" class="hidden"/>
-  </footer>
-</section>
+  </section>
 
+  <!-- ONAY BEKLEME: ilk girişte bir kez görünür -->
+  <section id="view-pending" class="hidden">
+    <div class="glass brand">
+      <div class="logo">𓂀</div>
+      <div><h1>BUHARA</h1><p>katılım onayı</p></div>
+    </div>
+    <div class="glass login-card">
+      <div class="pulse">◉</div>
+      <div><b id="pendingName">…</b> olarak kaydoldun.</div>
+      <div class="sys">Grup üyelerinden biri onaylayınca sohbet açılacak. Bu bir kez olur.</div>
+      <button id="cancelBtn" class="ghost">Vazgeç</button>
+    </div>
+  </section>
+
+  <!-- SOHBET -->
+  <section id="view-chat" class="hidden">
+    <div class="glass topbar">
+      <div class="logo sm">𓂀</div>
+      <div class="tt"><h2>BUHARA</h2><span id="statusText">bağlanıyor…</span></div>
+      <span class="dot" id="statusDot"></span>
+      <button id="logoutBtn" class="ghost sm-btn">Çıkış</button>
+    </div>
+    <div class="glass hidden" id="approveBox"><div class="sys" style="padding:10px 14px 0">Katılmak isteyenler:</div><div id="approveList"></div></div>
+    <div class="glass" id="log"></div>
+    <div class="glass dock">
+      <div class="attach hidden" id="attachSheet">
+        <button id="optPhoto" class="tile">🖼️<span>Resim</span></button>
+        <button id="optVideo" class="tile">🎬<span>Video</span></button>
+        <button id="optLocation" class="tile">📍<span>Konum</span></button>
+        <button id="optGif" class="tile">✨<span>GIF</span></button>
+      </div>
+      <div class="row"><button id="attachBtn" class="ghost icon" aria-label="Ekle">＋</button><input id="msg" placeholder="mesaj yaz…" autocomplete="off"/><button id="send" aria-label="Gönder">➤</button></div>
+      <input type="file" id="img" accept="image/*" class="hidden"/>
+      <input type="file" id="video" accept="video/*" class="hidden"/>
+      <input type="file" id="gifFile" accept="image/gif" class="hidden"/>
+    </div>
+  </section>
+
+</div>
 <script type="module" src="chat.js"></script>
 <script>
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))
