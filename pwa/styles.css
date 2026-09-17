@@ -1,0 +1,121 @@
+/* River-mystic dark theme — tokens River/src/index.css + tailwind.config.js'ten alındı.
+   Arka plan: pwa/pharaoh-bg.webp (şu an River bg placeholder, gerçek pharaoh imajını
+   aynı isimle üzerine atman yeterli, kod değişmez). */
+
+:root {
+  --c-paper: #141311;
+  --c-paperDeep: #1c1a17;
+  --c-ink: #f2ece4;
+  --c-muted: #9e948a;
+  --c-line: rgba(255, 255, 255, 0.07);
+  --c-amberMirai: #f0c07a;
+  --c-amberDeep: #e8a85c;
+  --c-terracotta: #e07a6a;
+  --c-cardBg: rgba(26, 24, 21, 0.84);
+  --c-sidebarBg: rgba(26, 24, 21, 0.68);
+  --c-cream: rgba(30, 28, 25, 0.72);
+  --shadow-mirai: rgba(0, 0, 0, 0.3);
+}
+
+* { font-family: 'Inter', system-ui, sans-serif; box-sizing: border-box; }
+h1, h2, .font-serif { font-family: 'Cormorant Garamond', serif; letter-spacing: -0.02em; }
+
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--c-paper); color: var(--c-ink);
+  overflow-x: hidden; min-height: 100vh;
+}
+
+/* blurred pharaoh backdrop */
+.bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+.bg img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.05); filter: blur(10px); opacity: 0.45; }
+.bg .veil { position: absolute; inset: 0; background: rgba(15, 14, 13, 0.35); }
+.bg .glow { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 0%, transparent 40%, rgba(42, 31, 20, 0.35) 100%); }
+
+.shell { max-width: 720px; margin: 0 auto; padding: 20px 14px 40px; }
+
+/* header card */
+.brand { display: flex; gap: 14px; align-items: center; padding: 18px; }
+.logo {
+  width: 52px; height: 52px; border-radius: 18px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--c-amberMirai), var(--c-terracotta));
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Cormorant Garamond', serif; font-size: 30px; color: #1c1a17;
+  box-shadow: 0 8px 32px var(--shadow-mirai); position: relative;
+}
+.logo::after { content: ""; position: absolute; inset: 7px; border: 1px solid rgba(255,255,255,0.25); border-radius: 12px; }
+.brand h1 { margin: 0; font-size: 26px; }
+.brand p { margin: 2px 0 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--c-muted); }
+
+.glass {
+  background: var(--c-cardBg);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--c-line); border-radius: 20px;
+  box-shadow: 0 8px 32px var(--shadow-mirai);
+}
+
+.status { display: flex; align-items: center; gap: 8px; margin: 12px 2px; font-size: 13px; color: var(--c-muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: #777; }
+.dot.on { background: var(--c-amberMirai); box-shadow: 0 0 10px var(--c-amberMirai); }
+
+/* chat log */
+#log {
+  min-height: 300px; max-height: 52vh; overflow-y: auto;
+  padding: 14px; margin: 0 0 12px;
+}
+#log > div { padding: 8px 12px; margin: 6px 0; border-radius: 14px; background: var(--c-cream); border: 1px solid var(--c-line); overflow-wrap: anywhere; }
+#log img { max-width: 100%; border-radius: 10px; display: block; margin-top: 6px; }
+
+/* composer dock */
+.dock { padding: 12px; position: sticky; bottom: 10px; }
+.row { display: flex; gap: 8px; margin: 6px 0; }
+input {
+  flex: 1; padding: 12px 14px; border-radius: 999px;
+  background: var(--c-cream); border: 1px solid var(--c-line); color: var(--c-ink);
+  outline: none; min-width: 0;
+}
+input:focus { border-color: var(--c-amberMirai); }
+button {
+  padding: 12px 18px; border-radius: 999px; border: 1px solid var(--c-line);
+  background: var(--c-ink); color: var(--c-paper); font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+button.ghost { background: var(--c-cream); color: var(--c-ink); }
+button:active { transform: scale(0.97); }
+
+details { margin: 10px 2px; border: 1px solid var(--c-line); border-radius: 16px; background: var(--c-sidebarBg); }
+details summary { padding: 12px 16px; cursor: pointer; color: var(--c-muted); font-size: 13px; }
+details .pad { padding: 0 12px 12px; }
+.sys { font-size: 12px; color: var(--c-muted); }
+input[type="file"] { border-radius: 14px; }
+.hidden { display: none !important; }
+
+/* login */
+.login-card { padding: 16px; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.login-card input { border-radius: 14px; }
+.login-card button { width: 100%; }
+#loginErr { color: var(--c-terracotta); min-height: 16px; }
+
+/* chat topbar */
+.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 10px; }
+.logo.sm { width: 40px; height: 40px; font-size: 22px; border-radius: 14px; }
+.topbar .tt { flex: 1; min-width: 0; }
+.topbar h2 { margin: 0; font-size: 20px; }
+.topbar .tt span { font-size: 12px; color: var(--c-muted); }
+.sm-btn { padding: 8px 14px; font-size: 13px; }
+
+/* whatsapp tarzı balonlar */
+#log { display: flex; flex-direction: column; }
+.bubble { max-width: 82%; padding: 8px 12px; margin: 4px 0; border-radius: 16px; background: var(--c-cream); border: 1px solid var(--c-line); overflow-wrap: anywhere; }
+.bubble.me { align-self: flex-end; background: linear-gradient(135deg, rgba(240,192,122,0.22), rgba(224,122,106,0.22)); border-color: rgba(240,192,122,0.35); }
+.bubble.them { align-self: flex-start; }
+.bubble .who { font-size: 11px; color: var(--c-amberMirai); font-weight: 600; margin-bottom: 2px; }
+.bubble img { max-width: 100%; border-radius: 10px; display: block; margin-top: 6px; }
+.bubble video { max-width: 100%; border-radius: 10px; display: block; margin-top: 6px; }
+.bubble a.loc { color: var(--c-amberMirai); font-weight: 600; }
+.seen { font-size: 11px; color: var(--c-muted); text-align: right; margin-top: 3px; }
+
+/* ek menüsü */
+button.icon { width: 46px; padding: 12px 0; font-size: 20px; line-height: 1; flex-shrink: 0; }
+.attach { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 10px; margin-bottom: 8px; border: 1px solid var(--c-line); border-radius: 16px; background: var(--c-sidebarBg); }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 4px; font-size: 24px; background: var(--c-cream); color: var(--c-ink); border: 1px solid var(--c-line); }
+.tile span { font-size: 11px; font-weight: 600; }
